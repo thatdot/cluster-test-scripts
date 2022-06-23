@@ -68,7 +68,7 @@ all_standing_queries = {
 
 def paginated_query(customer_id: str, page: int):
     page_start = page_size * page
-    return f"MATCH (n)--(m) WHERE strId(n) = '{customer_id}' RETURN m SKIP {page_start} LIMIT {page_size}"
+    return f"MATCH (n)-[e]-(m) WHERE strId(n) = '{customer_id}' RETURN m SKIP {page_start} LIMIT {page_size}"
 
 
 def run_b6():
@@ -102,6 +102,7 @@ def run_b6():
         print("Starting a paginated query batch")
         query_batch_start_time = perf_counter()
         while True:  # repeatedly query until we get a partial page
+            page_start_time = perf_counter()
             query = paginated_query(known_customer_id, page)
             api_result = requests.post(f"{a_quine_host}/api/v1/query/cypher", params={
                 "at-time": pinned_time_ms
@@ -111,6 +112,8 @@ def run_b6():
             }).json()
             assert(api_result["columns"] == ["m"])
             result_count = len(api_result["results"])
+            page_end_time = perf_counter()
+            # print(f"Page {page} took {(page_end_time-page_start_time)*1000:,.1f} milliseconds")
             page += 1
             results_so_far += result_count
             if result_count < page_size:
