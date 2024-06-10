@@ -4,7 +4,7 @@ import requests
 from typing import *
 import sys
 from time import sleep
-
+import json 
 """
 Env: Utilities
 ===========================
@@ -28,9 +28,9 @@ protobuf_schema_url = "https://thatdot-public.s3.us-west-2.amazonaws.com/host.de
 # Hosts that form the cluster. EDIT THIS.
 
 # THATDOT DEVELOPER
-quine_hosts: List[str] = ["http://localhost:8080", "http://localhost:8081", "http://localhost:8082", "http://localhost:8083"]
-quine_hosts_with_spares: List[str] = quine_hosts + \
-    ["http://localhost:8084"]
+quine_hosts: List[str] = ["http://localhost:8080", "http://localhost:8081", "http://localhost:8082", "http://localhost:8083"][:1]
+# quine_hosts_with_spares: List[str] = quine_hosts + \
+#    ["http://localhost:8084"]
 
 # if (len(quine_hosts) < 3):
 #     print("G2 expects a cluster of at least 3 hosts, please update prodenv.py")
@@ -43,7 +43,7 @@ a_quine_host = quine_hosts[0]
 kafka_partitions = 32
 
 # kafka broker string
-kafka_servers = "broker0.kafka:9092"
+kafka_servers = "127.0.0.1:9092"
 
 # how many ingest queries to execute simultaneously (per-host)
 ingest_parallelism = 32
@@ -169,26 +169,27 @@ def printIngestedCounts(which_ingest: str) -> None:
     print(f"totalCount={totalCnt}")
 
 
-def listIngest() -> None:
+def listIngest(namespace) -> None:
     for quine_host in quine_hosts_with_spares:
         stats = requests.get(
-            f"{quine_host}/api/v1/ingest").json()
+            f"{quine_host}/api/v1/ingest",
+            params = {"namespace" : namespace}).json()
         print("-------------------- " + quine_host + " --------------------")
         print(stats)
         print("-------------------------------------------------------------")
 
 
-def ingestStats(quine_host: str, which_ingest: str):
+def ingestStats(quine_host: str, which_ingest: str, namespace):
     stats = requests.get(
-        f"{quine_host}/api/v1/ingest/{which_ingest}").json()["stats"]
+        f"{quine_host}/api/v1/ingest/{which_ingest}", params = {"namespace" : namespace}).json()["stats"]
 
     return stats
 
 
-def listAllIngests() -> None:
+def listAllIngests(namespace) -> None:
     one_min_rate = 0
     for quine_host in quine_hosts:
-        stats = requests.get(f"{quine_host}/api/v1/ingest").json()
+        stats = requests.get(f"{quine_host}/api/v1/ingest", params = {"namespace" : namespace}).json()
         # print(stats)
         for which_ingest in stats:
             if stats[which_ingest]["status"] == "FAILED":
@@ -208,23 +209,21 @@ def listAllIngests() -> None:
 
 def deleteAllIngest() -> None:
     for quine_host in quine_hosts:
-        stats = requests.get(f"{quine_host}/api/v1/ingest").json()
+        resp = requests.get(f"{quine_host}/api/v1/ingest")
+        if not resp.ok:
+            raise Exception("failed to decode ingest list", resp.text)
+        stats = resp.json()
         # print(stats)
         for which_ingest in stats:
-            stats = requests.delete(
-                f"{quine_host}/api/v1/ingest/{which_ingest}").json()
-            print(stats)
-
+            resp = requests.delete(f"{quine_host}/api/v1/ingest/{which_ingest}")
+            if not resp.ok:
+                raise Exception("failed to delete ingest, ", resp.text)
 
 def deleteIngest(which_ingest: str) -> None:
     for quine_host in quine_hosts:
-        try:
-            stats = requests.delete(
-                f"{quine_host}/api/v1/ingest/{which_ingest}").json()
-            print(stats)
-        except Exception as e:
-            pass
-
+        resp = requests.delete(f"{quine_host}/api/v1/ingest/{which_ingest}")
+        if not resp.ok:
+            raise Exception("failed to delete ingest, ", resp.text)
 
 def addSampleQuery():
     resp = requests.put(f"{a_quine_host}/api/v1/query-ui/sample-queries", json=[
@@ -251,22 +250,24 @@ def clusterHealthAPICall():
 
 
 def removeAllStandingQueries():
-    queries = requests.get(
-        f"{a_quine_host}/api/v1/query/standing").json()
-
+    resp = requests.get(f"{a_quine_host}/api/v1/query/standing")
+    if not resp.ok:
+        raise Exception("Failed to get standing queries:", resp.text)
+    queries = resp.json()
     for query in queries:
-        resp = requests.delete(
-            f"{a_quine_host}/api/v1/query/standing/{query['name']}")
-        print(f"deleted SQ={query['name']}")
-        print(resp)
-
+        try:
+            resp = requests.delete(
+                f"{a_quine_host}/api/v1/query/standing/{query['name']}")
+            print(f"deleted SQ={query['name']}")
+            print(resp)
+        except:
+            print("failed to decode standing query deletion response")
 
 def startIngests(streams):
     for stream in streams:
         for i, quine_host in enumerate(quine_hosts):
             print(f"stream={stream} host={quine_host}")
             sobj = streams[stream]
-
             if sobj["format"] == "JSON":
                 startIngestJSON(quine_host, partitions(i), sobj)
             else:
@@ -287,7 +288,7 @@ def startIngestJSON(quine_host, partitions, sobj):
             "type": "CypherJson",
             "query": sobj["query"],
             "parameter": "props"
-        }
+        },
     })
     if resp.ok:
         print(f"Registered JSON ingest={sobj['name']} ec2 on {quine_host}")
@@ -319,7 +320,7 @@ def startIngestPROTO(quine_host, partitions, sobj):
             "parameter": "props",
             "schemaUrl": protobuf_schema_url,
             "typeName": sobj["type"]
-        }
+        },
     })
     if resp.ok:
         print(f"Registered PROTO ingest={sobj['name']} ec2 on {quine_host}")

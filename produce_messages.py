@@ -5,6 +5,7 @@ from sys import argv
 from google.protobuf import json_format
 from model.host_pb2 import Host
 from utils.prodenv import kafka_servers, datagen_seed, message_count
+from kafka.admin import KafkaAdminClient, ConfigResource
 
 """
 Produces Host messages (JSON or protobuf) to the specified kafka topic at the
@@ -32,6 +33,11 @@ def nextProto() -> bytes:
 	msg = Host()
 	json_format.ParseDict(datum, msg)
 	return msg.SerializeToString()
+
+admin_client = KafkaAdminClient()
+topic_list = []
+topic_list.append(ConfigResource('TOPIC', topic, {"retention.ms":"1000", "retention.bytes":"10000000","segment.bytes":"1000000"}))
+admin_client.alter_configs(topic_list)
 
 for i in range(message_count):
 	payload = nextProto() if proto else nextJson()
