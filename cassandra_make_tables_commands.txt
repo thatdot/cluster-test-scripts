@@ -1,0 +1,82 @@
+CREATE KEYSPACE quine WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}  AND durable_writes = false;
+CREATE TABLE quine.journals (
+    quine_id blob,
+    timestamp bigint,
+    data blob,
+    PRIMARY KEY (quine_id, timestamp)
+) WITH CLUSTERING ORDER BY (timestamp ASC)
+    AND compaction = {'class': 'TimeWindowCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4', 'compaction_window_unit': 'MINUTES', 'compaction_window_size': '1'}
+    AND default_time_to_live = 30
+    AND gc_grace_seconds = 120;
+CREATE TABLE quine.meta_data (
+    key text PRIMARY KEY,
+    value blob
+);
+CREATE TABLE quine.snapshots (
+    quine_id blob,
+    timestamp bigint,
+    multipart_index int,
+    data blob,
+    multipart_count int,
+    PRIMARY KEY (quine_id, timestamp, multipart_index)
+) WITH CLUSTERING ORDER BY (timestamp DESC, multipart_index ASC)
+    AND compaction ={'class': 'TimeWindowCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4', 'compaction_window_unit': 'MINUTES', 'compaction_window_size': '1'}
+    AND default_time_to_live = 30
+    AND gc_grace_seconds = 120;
+CREATE TABLE quine.standing_queries (
+    query_id uuid PRIMARY KEY,
+    queries blob
+);
+CREATE TABLE quine.standing_query_states (
+    quine_id blob,
+    standing_query_id uuid,
+    standing_query_part_id uuid,
+    data blob,
+    PRIMARY KEY (quine_id, standing_query_id, standing_query_part_id)
+) WITH CLUSTERING ORDER BY (standing_query_id ASC, standing_query_part_id ASC)
+    AND default_time_to_live = 30;
+CREATE TABLE quine.domain_graph_nodes (
+    dgn_id bigint PRIMARY KEY,
+    data blob
+) WITH additional_write_policy = '99p'
+    AND bloom_filter_fp_chance = 0.01
+    AND caching = {'keys': 'ALL', 'rows_per_partition': 'NONE'}
+    AND cdc = false
+    AND comment = ''
+    AND compaction = {'class': 'TimeWindowCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4', 'compaction_window_unit': 'MINUTES', 'compaction_window_size': '1'}
+    AND compression = {'chunk_length_in_kb': '16', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}
+    AND memtable = 'default'
+    AND crc_check_chance = 1.0
+    AND default_time_to_live = 30
+    AND extensions = {}
+    AND gc_grace_seconds = 864000
+    AND max_index_interval = 2048
+    AND memtable_flush_period_in_ms = 0
+    AND min_index_interval = 128
+    AND read_repair = 'BLOCKING'
+    AND speculative_retry = '99p';
+
+CREATE TABLE quine.domain_index_events (
+    quine_id blob,
+    timestamp bigint,
+    data blob,
+    dgn_id bigint,
+    PRIMARY KEY (quine_id, timestamp)
+) WITH CLUSTERING ORDER BY (timestamp ASC)
+    AND additional_write_policy = '99p'
+    AND bloom_filter_fp_chance = 0.01
+    AND caching = {'keys': 'ALL', 'rows_per_partition': 'NONE'}
+    AND cdc = false
+    AND comment = ''
+    AND compaction = {'class': 'TimeWindowCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4', 'compaction_window_unit': 'MINUTES', 'compaction_window_size': '1'}
+    AND compression = {'chunk_length_in_kb': '16', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}
+    AND memtable = 'default'
+    AND crc_check_chance = 1.0
+    AND default_time_to_live = 30
+    AND extensions = {}
+    AND gc_grace_seconds = 864000
+    AND max_index_interval = 2048
+    AND memtable_flush_period_in_ms = 0
+    AND min_index_interval = 128
+    AND read_repair = 'BLOCKING'
+    AND speculative_retry = '99p';

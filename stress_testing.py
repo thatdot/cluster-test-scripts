@@ -20,12 +20,13 @@ docker
 pipenv
 script
 
-# 
-
 To run the tests Each in their own terminal (tmux recommended)
 
 #kafka
-docker exec -it --user root kafka bash
+docker run -p 9092:9092 --name kafka \
+    -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://172.31.49.132:9092 \
+    -e KAFKA_BROKER_ID=0 \
+    apache/kafka:3.7.0
 
 #cassandra
 docker run -it --rm -p9042:9042 --name cassandra cassandra
@@ -50,7 +51,7 @@ python produce_messages.py hosts-proto proto
 cd quine/cluster-test-scripts/
 pipenv shell
 script
-python b3.py b3
+python stress_testing.py run
 """
 
 
