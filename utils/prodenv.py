@@ -3,7 +3,7 @@
 import requests
 from typing import *
 import sys
-from time import sleep
+from time import sleep, time
 import json 
 """
 Env: Utilities
@@ -27,23 +27,22 @@ protobuf_schema_url = "https://thatdot-public.s3.us-west-2.amazonaws.com/host.de
 
 # Hosts that form the cluster. EDIT THIS.
 
-# THATDOT DEVELOPER
-quine_hosts: List[str] = ["http://localhost:8080", "http://localhost:8081", "http://localhost:8082", "http://localhost:8083"][:1]
-# quine_hosts_with_spares: List[str] = quine_hosts + \
-#    ["http://localhost:8084"]
-
-# if (len(quine_hosts) < 3):
-#     print("G2 expects a cluster of at least 3 hosts, please update prodenv.py")
-#     exit(-1)
-
-# Sometimes we just need an arbitrary (but consistent) host in the cluster to run an API call against
-a_quine_host = quine_hosts[0]
-
+a_quine_host: str = "http://172.31.24.210:8080"
+    
+    # Hosts that form the cluster. EDIT THIS.
+def get_quine_hosts():
+    return [f"http://{host['address']}:8080" for i, host in requests.get(f"{a_quine_host}/api/v1/admin/status").json()["cluster"]["clusterMembers"].items()]
+try:
+    quine_hosts: List[str] = get_quine_hosts()
+    a_quine_host = quine_hosts[0]
+except Exception as e:
+    print(e)
+    
 # Number of partitions in the kafka topics
-kafka_partitions = 32
+kafka_partitions = 8
 
 # kafka broker string
-kafka_servers = "127.0.0.1:9092"
+kafka_servers = "172.31.26.114:9092"
 
 # how many ingest queries to execute simultaneously (per-host)
 ingest_parallelism = 32
@@ -328,6 +327,21 @@ def startIngestPROTO(quine_host, partitions, sobj):
         print(resp.text)
         # sys.exit(1)
 
+
+
+def liveness_check(timeout=5) -> bool:
+    t = time()
+    resp = requests.get(f"{a_quine_host}/api/v1/admin/liveness", timeout=timeout)
+    diff = time() - t
+    ok = True
+    if resp.ok:
+        print(f"Liveness check took {diff} seconds on host {a_quine_host}")
+    else:
+        print(
+            f"Could not get liveness check from {a_quine_host}: " + resp.text)
+        ok = False
+    return ok
+    
 
 def register_standing_queries(queries) -> bool:
     ok = True

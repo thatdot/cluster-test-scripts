@@ -22,27 +22,37 @@ script
 
 To run the tests Each in their own terminal (tmux recommended)
 
-#kafka
-docker run -p 9092:9092 --name kafka \
-    -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://172.31.49.132:9092 \
-    -e KAFKA_BROKER_ID=0 \
-    apache/kafka:3.7.0
+#kafka (python host)
+docker-compose up
 
-#cassandra
+
+#cassandra (python host)
 docker run -it --rm -p9042:9042 --name cassandra cassandra
 
-#quine
-cd [quine directory]
-docker exec -it cassandra cqlsh "$@"
-    [copy the command from cassandra_mk_tables here] 
+
+#before every run
+dcqlsh
+    drop keyspace quine;
+
+#quine for profiler
+cd quine
 java -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=9000 \
     -Dcom.sun.management.jmxremote.rmi.port=9000 -Dcom.sun.management.jmxremote.ssl=false \
     -Dcom.sun.management.jmxremote.authenticate=false -Djava.rmi.server.hostname=localhost \
     -Dquine.help-make-quine-better=false -Dconfig.file=[the quine.conf path here] \
-    -jar quine-assembly-1.6.4-37-gc7823a25a.jar 
+    -Dquine.id.type=uuid \
+    -Dquine.id.partitioned=true \
+    -jar quine-enterprise-assembly-1.6.4-66-g4ffd0df06.jar 
 
-    
-#produce messages
+@quine without profiler
+java -Dquine.help-make-quine-better=false \
+    -Dconfig.file=quine.conf -Xmx4012m -Xms4012m \
+    -Dquine.id.type=uuid \
+    -Dquine.id.partitioned=true \
+    -jar quine-enterprise-assembly-1.6.4-66-g4ffd0df06.jar 
+
+        
+#produce messages (python host)
 cd [cluster-testing-directory]
 pipenv shell
 python produce_messages.py hosts-proto proto
@@ -62,7 +72,7 @@ group_id = f"b3-{int(time.time() * 1000)}"
 # namespace_name = "default"
 
 host_ingest_query = (
-    """WITH idFrom($props.customer_id, 'host', $props.customer_id, $props.entity_id) AS hId """ +
+    """WITH locIdFrom(kafkaHash($props.customer_id), 'host', $props.customer_id, $props.entity_id) AS hId """ +
     """MATCH (n) WHERE id(n) = hId """ +
     """SET n = $props, n:host """
 )
@@ -111,12 +121,12 @@ def nextJson(dgen) -> bytes:
 	return json.dumps(dgen.next()).encode('utf-8')
 
 
-WAIT_TIME_AFTER_REMOVING_QUERIES = 5 * 60
+WAIT_TIME_AFTER_REMOVING_QUERIES = 0 * 60
 CONTROL_RUN_TIME = 10 * 60
-WAIT_TIME_AFTER_ADDING_QUERY = 60
+WAIT_TIME_AFTER_ADDING_QUERY = 10
 SINGLE_QUERY_RUNTIME = 10 * 60
-MULT_QUERY_NUM = 300
-WAIT_TIME_AFTER_ADDING_INGEST = 5 * 60
+MULT_QUERY_NUM = 1000
+WAIT_TIME_AFTER_ADDING_INGEST = 10 #0 * 60
 MULTI_QUERY_WAIT_TIME_AFTER = 3 * 60
 QUERY_THEN_INGEST_WAIT = 5 * 60
 QUERY_THEN_INGEST_RUNTIME = 10 * 60
@@ -152,12 +162,16 @@ def runControl():
 
 def runNQueries(n, waitTime):
     for i in range(n):
+        t = time.time()
+        # if i == 2 or i == 30:
+        #     input("Do the heap dump")
+        liveness_check()
         start = time.time()
         queryAccepted = register_query_for_pattern(mkPattern())
-        printNow("Adding query took " + str(time.time() - start) + " seconds")
+        printNow("Adding " + str(i+1) + "th query took " + str(time.time() - start) + " seconds")
         if not queryAccepted:
             printNow("query was not accepted")
-        sleep(waitTime)
+        sleep(waitTime - (time.time() - t))
 
 def runSingleQueryTest():
     printNow("Starting single query test")
@@ -213,43 +227,59 @@ def runStressTest(withIngest):
 
 
 
+tests = {
+    "control":runControl,
+    "singleQuery":runSingleQueryTest,
+    "multiQuery":runMultiQueryTest,
+    "queriesThenIngest":runQueriesThenIngest,
+    "stressTestWithIngest": lambda : runStressTest(True),
+    "stressTestNoIngest": lambda : runStressTest(False),
+}
+def runTest(testName):
+    resetTests()
+    if testName in tests:
+        print("Running test:", testName)
+        tests[testName]()
+    else:
+        print("Invalid test:", testName)
+
 
 def performanceTests():
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runSingleQueryTest()
+    # resetTests()
+    # runSingleQueryTest()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
     resetTests()
     runMultiQueryTest()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runQueriesThenIngest()
+    # resetTests()
+    # runQueriesThenIngest()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runStressTest(True)
+    # resetTests()
+    # runStressTest(True)
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runStressTest(False)    
+    # resetTests()
+    # runStressTest(False)    
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
     """
     #checkConfig()
     removeAllStandingQueries()
@@ -275,5 +305,10 @@ def performanceTests():
     """
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and (sys.argv[1] == "run" or sys.argv[1] == "b3"):
-        run_b3()
+    if len(sys.argv) > 1:
+        if (sys.argv[1] == "run" or sys.argv[1] == "b3"):
+            run_b3()
+        elif sys.argv[1] in tests:
+            runTest(sys.argv[1])
+        else:
+            print("Invalid test name:", sys.argv[1])
