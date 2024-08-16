@@ -10,24 +10,58 @@ import time
 # import itertools
 
 """
-B3: Standing Query Stress Test
-    1 ingest query
-    Unbounded number of standing queries, one added every {wait_between_sqs_sec} seconds
-Run: b3.py b3
+To set up the environment:
 
-As with all test scripts, ensure prodenv.py and variables at the top of the script reflect your
-current Quine cluster before starting the test.
+#install
+kafka
+influxdb (v1)
+java
+docker
+pipenv
+script
 
-To run, you will need a kafka topic named {kafka_topic} ("hosts-proto" by default) containing
-Protobuf-encoded messages cooresponding to the schema in host.proto
-An easy way to populate such a topic is by running:
-    produce_messages.py {kafka_topic} proto
+To run the tests Each in their own terminal (tmux recommended)
 
-The number of partitions on the topic should match the number of partitions expected
-by utils/prodenv.py, 32 by default.
+#kafka (python host)
+docker-compose up
 
-Monitor ingest rate via Grafana. Ingest rate should decrease cooresponding to the number of
-Standing Queries registered.
+
+#cassandra (python host)
+docker run -it --rm -p9042:9042 --name cassandra cassandra
+
+
+#before every run
+dcqlsh
+    drop keyspace quine;
+
+#quine for profiler
+cd quine
+java -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=9000 \
+    -Dcom.sun.management.jmxremote.rmi.port=9000 -Dcom.sun.management.jmxremote.ssl=false \
+    -Dcom.sun.management.jmxremote.authenticate=false -Djava.rmi.server.hostname=localhost \
+    -Dquine.help-make-quine-better=false -Dconfig.file=[the quine.conf path here] \
+    -Dquine.id.type=uuid \
+    -Dquine.id.partitioned=true \
+    -jar quine-enterprise-assembly-1.6.4-66-g4ffd0df06.jar 
+
+@quine without profiler
+java -Dquine.help-make-quine-better=false \
+    -Dconfig.file=quine.conf -Xmx4012m -Xms4012m \
+    -Dquine.id.type=uuid \
+    -Dquine.id.partitioned=true \
+    -jar quine-enterprise-assembly-1.6.4-66-g4ffd0df06.jar 
+
+        
+#produce messages (python host)
+cd [cluster-testing-directory]
+pipenv shell
+python produce_messages.py hosts-proto proto
+
+#python tests
+cd quine/cluster-test-scripts/
+pipenv shell
+script
+python stress_testing.py run
 """
 
 
@@ -38,7 +72,7 @@ group_id = f"b3-{int(time.time() * 1000)}"
 # namespace_name = "default"
 
 host_ingest_query = (
-    """WITH idFrom($props.customer_id, 'host', $props.customer_id, $props.entity_id) AS hId """ +
+    """WITH locIdFrom(kafkaHash($props.customer_id), 'host', $props.customer_id, $props.entity_id) AS hId """ +
     """MATCH (n) WHERE id(n) = hId """ +
     """SET n = $props, n:host """
 )
@@ -87,12 +121,12 @@ def nextJson(dgen) -> bytes:
 	return json.dumps(dgen.next()).encode('utf-8')
 
 
-WAIT_TIME_AFTER_REMOVING_QUERIES = 5 * 60
+WAIT_TIME_AFTER_REMOVING_QUERIES = 0 * 60
 CONTROL_RUN_TIME = 10 * 60
-WAIT_TIME_AFTER_ADDING_QUERY = 60
+WAIT_TIME_AFTER_ADDING_QUERY = 10
 SINGLE_QUERY_RUNTIME = 10 * 60
-MULT_QUERY_NUM = 300
-WAIT_TIME_AFTER_ADDING_INGEST = 5 * 60
+MULT_QUERY_NUM = 1000
+WAIT_TIME_AFTER_ADDING_INGEST = 10 #0 * 60
 MULTI_QUERY_WAIT_TIME_AFTER = 3 * 60
 QUERY_THEN_INGEST_WAIT = 5 * 60
 QUERY_THEN_INGEST_RUNTIME = 10 * 60
@@ -128,12 +162,16 @@ def runControl():
 
 def runNQueries(n, waitTime):
     for i in range(n):
+        t = time.time()
+        # if i == 2 or i == 30:
+        #     input("Do the heap dump")
+        liveness_check()
         start = time.time()
         queryAccepted = register_query_for_pattern(mkPattern())
-        printNow("Adding query took " + str(time.time() - start) + " seconds")
+        printNow("Adding " + str(i+1) + "th query took " + str(time.time() - start) + " seconds")
         if not queryAccepted:
             printNow("query was not accepted")
-        sleep(waitTime)
+        sleep(waitTime - (time.time() - t))
 
 def runSingleQueryTest():
     printNow("Starting single query test")
@@ -189,43 +227,59 @@ def runStressTest(withIngest):
 
 
 
+tests = {
+    "control":runControl,
+    "singleQuery":runSingleQueryTest,
+    "multiQuery":runMultiQueryTest,
+    "queriesThenIngest":runQueriesThenIngest,
+    "stressTestWithIngest": lambda : runStressTest(True),
+    "stressTestNoIngest": lambda : runStressTest(False),
+}
+def runTest(testName):
+    resetTests()
+    if testName in tests:
+        print("Running test:", testName)
+        tests[testName]()
+    else:
+        print("Invalid test:", testName)
+
 
 def performanceTests():
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runSingleQueryTest()
+    # resetTests()
+    # runSingleQueryTest()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
     resetTests()
     runMultiQueryTest()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runQueriesThenIngest()
+    # resetTests()
+    # runQueriesThenIngest()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runStressTest(True)
+    # resetTests()
+    # runStressTest(True)
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
 
-    resetTests()
-    runStressTest(False)    
+    # resetTests()
+    # runStressTest(False)    
 
-    resetTests()
-    runControl()
+    # resetTests()
+    # runControl()
     """
     #checkConfig()
     removeAllStandingQueries()
@@ -251,5 +305,10 @@ def performanceTests():
     """
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and (sys.argv[1] == "run" or sys.argv[1] == "b3"):
-        run_b3()
+    if len(sys.argv) > 1:
+        if (sys.argv[1] == "run" or sys.argv[1] == "b3"):
+            run_b3()
+        elif sys.argv[1] in tests:
+            runTest(sys.argv[1])
+        else:
+            print("Invalid test name:", sys.argv[1])
